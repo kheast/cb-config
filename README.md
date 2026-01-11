@@ -54,7 +54,7 @@ That's it! The application will automatically:
 - Create an admin user
 - Start the development server
 
-**Note**: You don't need to clone the repository or have the source code locally. The `cbc-edit` script downloads everything it needs from GitHub automatically.
+**Note**: You don't need to clone the repository or have the source code locally. The `cbc-edit` script automatically installs the `cb-config` package from GitHub using uv, which handles all dependencies and caching.
 
 ## Usage
 
