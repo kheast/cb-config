@@ -68,3 +68,12 @@ directly from GitHub. Users can download just the `cbc-edit` script and run it f
 any directory. The application code is automatically downloaded from GitHub and cached
 by uv. No cloning or local source code required.
 
+## ADDENDUM 5
+
+When I run `cbc-edit` it just hangs.  As you said, the script is likely hanging because
+it's trying to install cb-config as a package from git, but the repository isn't set up
+as an installable Python package.
+
+Resolve the problem by modifying the package to make it installable.  If this is
+done, then `cbc-edit` should work as it is or with minor modifications.  Do not resolve
+this by making the script clone the repository and running it from the cloned location.
