@@ -1,51 +1,11 @@
 """
 Django admin configuration for chatbot configurations.
 """
-from django import forms
 from django.contrib import admin
 from django.core.exceptions import ValidationError
 from django.utils.html import format_html
 from .models import ConfigurationFile
-
-
-class ConfigurationFileAdminForm(forms.ModelForm):
-    """
-    Custom form for ConfigurationFile with better JSON editing.
-    """
-    config_data = forms.JSONField(
-        widget=forms.Textarea(attrs={
-            'rows': 20,
-            'cols': 80,
-            'style': 'font-family: monospace; font-size: 12px;'
-        }),
-        help_text="Complete configuration as JSON. This will be validated against the ChatbotConfig schema."
-    )
-
-    class Meta:
-        model = ConfigurationFile
-        fields = ['name', 'description', 'author', 'config_data']
-
-    def clean(self):
-        cleaned_data = super().clean()
-
-        # Ensure metadata.name matches the name field
-        config_data = cleaned_data.get('config_data', {})
-        name = cleaned_data.get('name', '')
-
-        if config_data:
-            if 'metadata' not in config_data:
-                config_data['metadata'] = {}
-            config_data['metadata']['name'] = name
-
-            # Also sync description and author if provided
-            if cleaned_data.get('description'):
-                config_data['metadata']['description'] = cleaned_data['description']
-            if cleaned_data.get('author'):
-                config_data['metadata']['author'] = cleaned_data['author']
-
-            cleaned_data['config_data'] = config_data
-
-        return cleaned_data
+from .forms import ConfigurationFileForm
 
 
 @admin.register(ConfigurationFile)
@@ -53,7 +13,7 @@ class ConfigurationFileAdmin(admin.ModelAdmin):
     """
     Admin interface for managing chatbot configurations.
     """
-    form = ConfigurationFileAdminForm
+    form = ConfigurationFileForm
 
     list_display = [
         'name',
@@ -85,15 +45,89 @@ class ConfigurationFileAdmin(admin.ModelAdmin):
 
     fieldsets = (
         ('Configuration Identity', {
-            'fields': ('name', 'description', 'author')
+            'fields': (
+                'config_name',
+                'config_description',
+                'config_author',
+            ),
+            'description': 'Basic information about this chatbot configuration.'
+        }),
+        ('System Prompt', {
+            'fields': (
+                'system_prompt_base',
+            ),
+            'description': 'The core system prompt that defines the chatbot\'s behavior.'
+        }),
+        ('Persona Settings', {
+            'fields': (
+                'persona_name',
+                'persona_tone',
+                'persona_verbosity',
+                'persona_personality_traits',
+            ),
+            'classes': ('collapse',),
+            'description': 'Customize the chatbot\'s personality and communication style.'
+        }),
+        ('Response Configuration', {
+            'fields': (
+                'response_guidelines',
+                'include_current_date',
+                'include_fiscal_period',
+                'include_user_role',
+                'include_dashboard_context',
+            ),
+            'classes': ('collapse',),
+            'description': 'Configure response formatting and context injection.'
+        }),
+        ('Data Sources', {
+            'fields': (
+                'datasources_json',
+            ),
+            'description': 'Define the data sources available to the chatbot (JSON array).'
+        }),
+        ('Semantic Layer', {
+            'fields': (
+                'business_terms_json',
+                'field_mappings_json',
+            ),
+            'classes': ('collapse',),
+            'description': 'Define business terminology and field mappings (JSON objects).'
+        }),
+        ('LLM Parameters', {
+            'fields': (
+                'llm_model',
+                'llm_temperature',
+                'llm_max_tokens',
+                'llm_top_p',
+            ),
+            'classes': ('collapse',),
+            'description': 'Configure the language model parameters.'
+        }),
+        ('Conversation Memory', {
+            'fields': (
+                'memory_enabled',
+                'memory_max_turns',
+                'memory_summarize_after_turns',
+            ),
+            'classes': ('collapse',),
+            'description': 'Configure conversation history and memory settings.'
+        }),
+        ('Advanced Configuration', {
+            'fields': (
+                'advanced_config_json',
+            ),
+            'classes': ('collapse',),
+            'description': 'Advanced settings including guardrails, MCP tools, dashboard integration, and logging (JSON object).'
         }),
         ('File Information', {
-            'fields': ('filename', 'file_path_display', 'created', 'modified'),
-            'classes': ('collapse',)
-        }),
-        ('Configuration Data', {
-            'fields': ('config_data',),
-            'description': 'Edit the complete JSON configuration below. Changes will be validated before saving.'
+            'fields': (
+                'filename',
+                'file_path_display',
+                'created',
+                'modified',
+            ),
+            'classes': ('collapse',),
+            'description': 'File system information (read-only).'
         }),
     )
 
@@ -173,16 +207,13 @@ class ConfigurationFileAdmin(admin.ModelAdmin):
 
     def get_form(self, request, obj=None, **kwargs):
         """
-        Customize the form to provide better help text for new instances.
+        Customize the form for new vs existing instances.
         """
         form = super().get_form(request, obj, **kwargs)
 
         if obj is None:
-            # New instance
-            form.base_fields['config_data'].help_text = (
-                "Enter a complete chatbot configuration as JSON. "
-                "Make sure to include all required fields: metadata, data_context, and system_prompt. "
-                "The metadata.name will be synced with the 'name' field above."
-            )
+            # New instance - provide helpful defaults
+            form.base_fields['config_name'].help_text += " (Required: unique, kebab-case)"
+            form.base_fields['system_prompt_base'].help_text += " (Minimum 50 characters)"
 
         return form
