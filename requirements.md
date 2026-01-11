@@ -32,5 +32,5 @@ Grappelli.
 
 Additional requirements:
 
-The application should be stored in 
+The application should be stored in a github repository.
 
