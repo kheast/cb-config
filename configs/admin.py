@@ -4,8 +4,29 @@ Django admin configuration for chatbot configurations.
 from django.contrib import admin
 from django.core.exceptions import ValidationError
 from django.utils.html import format_html
-from .models import ConfigurationFile
+from .models import ConfigurationFile, Datasource, BusinessTerm, FieldMapping
 from .forms import ConfigurationFileForm
+
+
+class DatasourceInline(admin.TabularInline):
+    """Inline admin for datasources."""
+    model = Datasource
+    extra = 1
+    fields = ['name', 'portal_datasource_id', 'description', 'primary_entity', 'refresh_frequency']
+
+
+class BusinessTermInline(admin.TabularInline):
+    """Inline admin for business terms."""
+    model = BusinessTerm
+    extra = 1
+    fields = ['term', 'definition']
+
+
+class FieldMappingInline(admin.TabularInline):
+    """Inline admin for field mappings."""
+    model = FieldMapping
+    extra = 1
+    fields = ['field_name', 'business_name', 'description', 'format', 'valid_values']
 
 
 @admin.register(ConfigurationFile)
@@ -14,6 +35,7 @@ class ConfigurationFileAdmin(admin.ModelAdmin):
     Admin interface for managing chatbot configurations.
     """
     form = ConfigurationFileForm
+    inlines = [DatasourceInline, BusinessTermInline, FieldMappingInline]
 
     list_display = [
         'name',
@@ -79,19 +101,9 @@ class ConfigurationFileAdmin(admin.ModelAdmin):
             'classes': ('collapse',),
             'description': 'Configure response formatting and context injection.'
         }),
-        ('Data Sources', {
-            'fields': (
-                'datasources_json',
-            ),
-            'description': 'Define the data sources available to the chatbot (JSON array).'
-        }),
-        ('Semantic Layer', {
-            'fields': (
-                'business_terms_json',
-                'field_mappings_json',
-            ),
-            'classes': ('collapse',),
-            'description': 'Define business terminology and field mappings (JSON objects).'
+        ('Data Sources & Semantic Layer', {
+            'fields': (),
+            'description': 'Data sources, business terms, and field mappings are managed in the sections below this form.'
         }),
         ('LLM Parameters', {
             'fields': (
@@ -174,19 +186,38 @@ class ConfigurationFileAdmin(admin.ModelAdmin):
 
     def save_model(self, request, obj, form, change):
         """
-        Override save_model to handle validation errors gracefully.
+        Override save_model to skip file save initially (related objects haven't been saved yet).
         """
         try:
-            super().save_model(request, obj, form, change)
+            # Save to database but skip file save (related objects not yet saved)
+            obj.save(skip_file_save=True)
+        except ValidationError as e:
             self.message_user(
                 request,
-                f"Configuration '{obj.name}' saved successfully to {obj.filename}.json",
+                f"Validation error: {e}",
+                level='error'
+            )
+            raise
+
+    def save_related(self, request, form, formsets, change):
+        """
+        Override save_related to sync related objects to config_data and save to file after inlines are saved.
+        """
+        # First save the related objects (inlines)
+        super().save_related(request, form, formsets, change)
+
+        # Now sync the related objects to config_data and save to file
+        try:
+            form.instance.save_with_related()
+            self.message_user(
+                request,
+                f"Configuration '{form.instance.name}' saved successfully to {form.instance.filename}.json",
                 level='success'
             )
         except ValidationError as e:
             self.message_user(
                 request,
-                f"Validation error: {e}",
+                f"Error saving configuration file: {e}",
                 level='error'
             )
             raise

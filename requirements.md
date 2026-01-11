@@ -41,3 +41,15 @@ Python virtualenvironments.  Instead, create a bash script named `cbc-edit`.  `c
 will contain a shebang that uses `uv run` to download and the application and run it.
 All that a user should need to run this application is a copy of the `cbc-edit`.
 
+## ADDENDUM 2
+
+Currently, the contents of the configuration file must be provided as a json blob.
+Instead of this, make each field of the configuration editable in the user interface.
+
+## ADDENDUM 3
+
+The user of the application should never have to write JSON.  For example, in "Semantic
+Layer", "Business Terms", they are currently expected to provide a JSON object mapping
+terms to definitions.  Instead, update the interface to allow the user to define this
+mapping without JSON.  For example, they should be able to perform CRUD operations on a
+list of mappings for term to definition.  The same thing for "Field Mappings".

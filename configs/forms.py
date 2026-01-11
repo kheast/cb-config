@@ -100,39 +100,8 @@ class ConfigurationFileForm(forms.ModelForm):
         help_text="Include information about the current dashboard"
     )
 
-    # Data Context - Datasources (as JSON for now, can be improved with inline formsets)
-    datasources_json = forms.CharField(
-        widget=forms.Textarea(attrs={
-            'rows': 10,
-            'cols': 80,
-            'style': 'font-family: monospace; font-size: 12px;'
-        }),
-        label="Datasources",
-        help_text="JSON array of datasource objects. Must have at least one datasource."
-    )
-
-    # Semantic Layer
-    business_terms_json = forms.CharField(
-        widget=forms.Textarea(attrs={
-            'rows': 8,
-            'cols': 80,
-            'style': 'font-family: monospace; font-size: 12px;'
-        }),
-        required=False,
-        label="Business Terms",
-        help_text="JSON object mapping terms to definitions (e.g., {\"ARR\": \"Annual Recurring Revenue\"})"
-    )
-
-    field_mappings_json = forms.CharField(
-        widget=forms.Textarea(attrs={
-            'rows': 8,
-            'cols': 80,
-            'style': 'font-family: monospace; font-size: 12px;'
-        }),
-        required=False,
-        label="Field Mappings",
-        help_text="JSON object mapping technical fields to business terminology"
-    )
+    # Note: Datasources, Business Terms, and Field Mappings are now managed via inline formsets
+    # in the admin interface, so no form fields are needed for them here.
 
     # LLM Parameters
     llm_model = forms.CharField(
@@ -241,18 +210,8 @@ class ConfigurationFileForm(forms.ModelForm):
         self.fields['include_user_role'].initial = context_injection.get('include_user_role', False)
         self.fields['include_dashboard_context'].initial = context_injection.get('include_dashboard_context', True)
 
-        # Data Context
-        data_context = config.get('data_context', {})
-        datasources = data_context.get('datasources', [])
-        self.fields['datasources_json'].initial = json.dumps(datasources, indent=2)
-
-        # Semantic Layer
-        semantic_layer = data_context.get('semantic_layer', {})
-        business_terms = semantic_layer.get('business_terms', {})
-        self.fields['business_terms_json'].initial = json.dumps(business_terms, indent=2) if business_terms else '{}'
-
-        field_mappings = semantic_layer.get('field_mappings', {})
-        self.fields['field_mappings_json'].initial = json.dumps(field_mappings, indent=2) if field_mappings else '{}'
+        # Note: Datasources, Business Terms, and Field Mappings are now managed via inline formsets,
+        # so we don't populate form fields for them.
 
         # LLM Parameters
         llm_params = config.get('llm_parameters', {})
@@ -281,44 +240,8 @@ class ConfigurationFileForm(forms.ModelForm):
         advanced = {k: v for k, v in advanced.items() if v}
         self.fields['advanced_config_json'].initial = json.dumps(advanced, indent=2) if advanced else '{}'
 
-    def clean_datasources_json(self):
-        """Validate datasources JSON."""
-        data = self.cleaned_data['datasources_json']
-        try:
-            datasources = json.loads(data)
-            if not isinstance(datasources, list):
-                raise ValidationError("Datasources must be a JSON array")
-            if len(datasources) == 0:
-                raise ValidationError("At least one datasource is required")
-            return data
-        except json.JSONDecodeError as e:
-            raise ValidationError(f"Invalid JSON: {e}")
-
-    def clean_business_terms_json(self):
-        """Validate business terms JSON."""
-        data = self.cleaned_data['business_terms_json']
-        if not data or data.strip() == '':
-            return '{}'
-        try:
-            terms = json.loads(data)
-            if not isinstance(terms, dict):
-                raise ValidationError("Business terms must be a JSON object")
-            return data
-        except json.JSONDecodeError as e:
-            raise ValidationError(f"Invalid JSON: {e}")
-
-    def clean_field_mappings_json(self):
-        """Validate field mappings JSON."""
-        data = self.cleaned_data['field_mappings_json']
-        if not data or data.strip() == '':
-            return '{}'
-        try:
-            mappings = json.loads(data)
-            if not isinstance(mappings, dict):
-                raise ValidationError("Field mappings must be a JSON object")
-            return data
-        except json.JSONDecodeError as e:
-            raise ValidationError(f"Invalid JSON: {e}")
+    # Note: Datasources, Business Terms, and Field Mappings validation removed
+    # since they're now managed via inline formsets
 
     def clean_advanced_config_json(self):
         """Validate advanced config JSON."""
@@ -353,11 +276,11 @@ class ConfigurationFileForm(forms.ModelForm):
         # Build the complete configuration
         from datetime import datetime
 
-        # Parse JSON fields
-        datasources = json.loads(cleaned_data.get('datasources_json', '[]'))
-        business_terms = json.loads(cleaned_data.get('business_terms_json', '{}'))
-        field_mappings = json.loads(cleaned_data.get('field_mappings_json', '{}'))
+        # Parse JSON fields (only advanced config now)
         advanced_config = json.loads(cleaned_data.get('advanced_config_json', '{}'))
+
+        # Note: datasources, business_terms, and field_mappings are handled by inline formsets
+        # and will be synced to config_data separately via sync_related_to_config_data()
 
         # Parse personality traits and guidelines
         traits_text = cleaned_data.get('persona_personality_traits', '')
@@ -374,6 +297,8 @@ class ConfigurationFileForm(forms.ModelForm):
             created = now
 
         # Build complete config_data
+        # Note: datasources, business_terms, and field_mappings will be populated
+        # by sync_related_to_config_data() after the related objects are saved
         config_data = {
             "version": "1.0.0",
             "metadata": {
@@ -384,10 +309,10 @@ class ConfigurationFileForm(forms.ModelForm):
                 "author": cleaned_data.get('config_author', ''),
             },
             "data_context": {
-                "datasources": datasources,
+                "datasources": [],  # Will be populated from inline formset
                 "semantic_layer": {
-                    "business_terms": business_terms,
-                    "field_mappings": field_mappings,
+                    "business_terms": {},  # Will be populated from inline formset
+                    "field_mappings": {},  # Will be populated from inline formset
                 },
             },
             "system_prompt": {
