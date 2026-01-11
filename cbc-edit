@@ -1,78 +1,100 @@
-#!/usr/bin/env bash
+#!/usr/bin/env -S uv run
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#     "cb-config",
+#     "django>=5.0,<6.0",
+#     "django-grappelli>=4.0,<5.0",
+#     "pydantic>=2.0,<3.0",
+# ]
 #
-# Chatbot Configuration Editor
-#
-# This script launches the Django-based chatbot configuration manager.
-# It uses 'uv' to automatically manage dependencies without requiring manual installation.
-#
-# Requirements:
-#   - uv installed (https://github.com/astral-sh/uv)
-#   - This script should be run from the repository directory
-#
-# Usage:
-#   ./cbc-edit
-#
+# [tool.uv.sources]
+# cb-config = { git = "https://github.com/kheast/cb-config.git" }
+# ///
+"""
+Chatbot Configuration Editor
 
-set -e
+A standalone script for managing chatbot configurations.
+Downloads the application directly from GitHub and runs it locally.
 
-# Get the directory where this script is located
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+Requirements:
+  - uv installed (https://github.com/astral-sh/uv)
 
-# Change to the script directory
-cd "$SCRIPT_DIR"
+Usage:
+  ./cbc-edit
+"""
 
-echo "=========================================="
-echo "  Chatbot Configuration Editor"
-echo "=========================================="
-echo ""
+import os
+import sys
+import subprocess
+from pathlib import Path
 
-# Check if uv is installed
-if ! command -v uv &> /dev/null; then
-    echo "Error: 'uv' is not installed."
-    echo "Please install uv: https://github.com/astral-sh/uv"
-    echo ""
-    echo "Quick install:"
-    echo "  curl -LsSf https://astral.sh/uv/install.sh | sh"
-    exit 1
-fi
 
-echo "Initializing application..."
-echo ""
+def main():
+    """Launch the Django development server for chatbot configuration management."""
 
-# Run database migrations
-echo "Setting up database..."
-uv run python manage.py migrate --no-input
+    print("=" * 50)
+    print("  Chatbot Configuration Editor")
+    print("=" * 50)
+    print()
 
-# Check if a superuser exists, if not create one
-echo ""
-echo "Checking for admin user..."
-uv run python manage.py shell -c "
-from django.contrib.auth import get_user_model;
-User = get_user_model();
-if not User.objects.filter(is_superuser=True).exists():
-    User.objects.create_superuser('admin', 'admin@example.com', 'admin');
-    print('Created admin user: admin/admin');
-else:
-    print('Admin user already exists');
-" 2>/dev/null || true
+    # Set up Django settings
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'cbconfig.settings')
 
-echo ""
-echo "=========================================="
-echo "  Starting Development Server"
-echo "=========================================="
-echo ""
-echo "Admin interface will be available at:"
-echo "  http://127.0.0.1:8000/admin/"
-echo ""
-echo "Login credentials:"
-echo "  Username: admin"
-echo "  Password: admin"
-echo ""
-echo "Configuration files will be stored in:"
-echo "  $(pwd)"
-echo ""
-echo "Press Ctrl+C to stop the server"
-echo ""
+    # Import Django
+    try:
+        import django
+        from django.core.management import execute_from_command_line
+    except ImportError as e:
+        print(f"Error: Failed to import Django: {e}")
+        print()
+        print("This should not happen. Please ensure uv is installed correctly.")
+        sys.exit(1)
 
-# Start the Django development server
-uv run python manage.py runserver
+    # Setup Django
+    django.setup()
+
+    print("Initializing application...")
+    print()
+
+    # Run migrations
+    print("Setting up database...")
+    execute_from_command_line(['cbc-edit', 'migrate', '--no-input'])
+
+    # Check if a superuser exists, if not create one
+    print()
+    print("Checking for admin user...")
+
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+
+    if not User.objects.filter(is_superuser=True).exists():
+        User.objects.create_superuser('admin', 'admin@example.com', 'admin')
+        print("Created admin user: admin/admin")
+    else:
+        print("Admin user already exists")
+
+    print()
+    print("=" * 50)
+    print("  Starting Development Server")
+    print("=" * 50)
+    print()
+    print("Admin interface will be available at:")
+    print("  http://127.0.0.1:8000/admin/")
+    print()
+    print("Login credentials:")
+    print("  Username: admin")
+    print("  Password: admin")
+    print()
+    print("Configuration files will be stored in:")
+    print(f"  {Path.cwd()}")
+    print()
+    print("Press Ctrl+C to stop the server")
+    print()
+
+    # Start the Django development server
+    execute_from_command_line(['cbc-edit', 'runserver'])
+
+
+if __name__ == '__main__':
+    main()

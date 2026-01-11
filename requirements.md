@@ -53,3 +53,18 @@ Layer", "Business Terms", they are currently expected to provide a JSON object m
 terms to definitions.  Instead, update the interface to allow the user to define this
 mapping without JSON.  For example, they should be able to perform CRUD operations on a
 list of mappings for term to definition.  The same thing for "Field Mappings".
+
+## ADDENDUM 4
+
+I note that `cbc-edit` requires that the github repo be present on disk.  The idea was
+that the user would not have to know about git or have the source code present on disk.
+Instead, the desire was that the bash script have a `[tool.uv.sources]` section that
+specified the application is taken directly from the public repo
+`github.com/kheast/cb-config`.
+
+**Implementation**: The `cbc-edit` script is now a standalone Python script that uses
+PEP 723 inline script metadata with `[tool.uv.sources]` to pull the cb-config package
+directly from GitHub. Users can download just the `cbc-edit` script and run it from
+any directory. The application code is automatically downloaded from GitHub and cached
+by uv. No cloning or local source code required.
+

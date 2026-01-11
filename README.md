@@ -30,10 +30,10 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 
 ## Quick Start
 
-1. Clone this repository:
+1. Download the `cbc-edit` script:
 ```bash
-git clone https://github.com/kheast/cb-config.git
-cd cb-config
+curl -O https://raw.githubusercontent.com/kheast/cb-config/main/cbc-edit
+chmod +x cbc-edit
 ```
 
 2. Run the application:
@@ -48,10 +48,13 @@ cd cb-config
    - Password: `admin`
 
 That's it! The application will automatically:
+- Download the latest version from GitHub
 - Install all required dependencies
 - Set up the database
 - Create an admin user
 - Start the development server
+
+**Note**: You don't need to clone the repository or have the source code locally. The `cbc-edit` script downloads everything it needs from GitHub automatically.
 
 ## Usage
 
@@ -108,6 +111,7 @@ The files will be removed from disk. **Note**: Deleted filenames are not reused.
 
 ```
 your-working-directory/
+├── cbc-edit             # The launcher script (download once)
 ├── 000001.json          # Configuration files
 ├── 000002.json
 ├── 000003.json
@@ -115,7 +119,7 @@ your-working-directory/
 └── cbconfig.db          # SQLite database
 ```
 
-Configuration files are stored as JSON in the directory where you run `./cbc-edit`.
+Configuration files are stored as JSON in the directory where you run `./cbc-edit`. The application code is automatically downloaded and cached by `uv` in your system cache directory, so you don't need the source code locally.
 
 ## Configuration File Format
 
@@ -183,6 +187,28 @@ Refer to `bootstrap/chatbot_config.py` for the complete schema definition.
 
 ## Development
 
+**Note**: This section is for developers who want to contribute to the project. End users don't need to clone the repository - just download and run the `cbc-edit` script as described in Quick Start above.
+
+### For Contributors: Setting Up Development Environment
+
+If you want to contribute to this project:
+
+1. Clone the repository:
+```bash
+git clone https://github.com/kheast/cb-config.git
+cd cb-config
+```
+
+2. Install dependencies:
+```bash
+uv sync
+```
+
+3. Run the development server:
+```bash
+uv run python manage.py runserver
+```
+
 ### Project Structure
 
 ```
@@ -198,7 +224,7 @@ cb-config/
 │   ├── admin.py                # Admin interface
 │   └── apps.py                 # App configuration
 ├── manage.py                   # Django management
-├── cbc-edit                    # Launcher script
+├── cbc-edit                    # Standalone launcher script
 ├── pyproject.toml              # Dependencies
 └── README.md                   # This file
 ```
