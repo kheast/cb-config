@@ -1,0 +1,25 @@
+[project]
+name = "cb-config"
+version = "1.0.0"
+description = "Chatbot Configuration Manager - Django application for managing chatbot configuration files"
+requires-python = ">=3.11"
+dependencies = [
+    "django>=5.0,<6.0",
+    "django-grappelli>=4.0,<5.0",
+    "pydantic>=2.0,<3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ipython",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["cbconfig", "configs", "bootstrap"]
+
+[tool.uv]
+dev-dependencies = []

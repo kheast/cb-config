@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "version": "1.0.0",
+  "metadata": {
+    "name": "sales-dashboard-chatbot",
+    "description": "Chatbot for sales dashboard with Salesforce data access",
+    "created": "2024-01-15T10:00:00Z",
+    "modified": "2024-01-15T10:00:00Z",
+    "author": "admin@example.com"
+  },
+  "data_context": {
+    "datasources": [
+      {
+        "name": "Salesforce Opportunities",
+        "portal_datasource_id": "sf-opp-001",
+        "description": "Sales opportunities from Salesforce",
+        "primary_entity": "Opportunity",
+        "refresh_frequency": "hourly"
+      }
+    ],
+    "semantic_layer": {
+      "business_terms": {
+        "ARR": "Annual Recurring Revenue",
+        "MRR": "Monthly Recurring Revenue",
+        "pipeline": "Total value of all open opportunities"
+      },
+      "field_mappings": {
+        "amount": {
+          "business_name": "Deal Amount",
+          "description": "Total contract value",
+          "format": "currency"
+        },
+        "stage": {
+          "business_name": "Deal Stage",
+          "description": "Current stage in the sales process",
+          "format": "text",
+          "valid_values": ["Prospecting", "Qualification", "Proposal", "Negotiation", "Closed Won", "Closed Lost"]
+        }
+      }
+    },
+    "sample_questions": [
+      {
+        "question": "What's our pipeline value?",
+        "interpretation": "Sum of amount field for all opportunities where stage is not 'Closed Lost' or 'Closed Won'",
+        "datasource": "Salesforce Opportunities"
+      }
+    ]
+  },
+  "system_prompt": {
+    "base_prompt": "You are a helpful sales analytics assistant. You help users understand their sales data by answering questions about opportunities, pipeline, and revenue metrics. Always provide clear, concise answers with relevant context.",
+    "persona": {
+      "name": "Sales Assistant",
+      "tone": "professional but approachable",
+      "verbosity": "concise",
+      "personality_traits": ["data-driven", "helpful", "business-focused"]
+    },
+    "response_guidelines": [
+      "Always cite the data source for your answers",
+      "Use business terminology from the semantic layer",
+      "Format currency values appropriately",
+      "Highlight trends and insights when relevant"
+    ]
+  }
+}

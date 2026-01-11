@@ -4,8 +4,9 @@ application -- there is no need to use a standalone webserver such as nginx.
 
 The application is intended to perform CRUD operations on "chatbot configuration files".
 The contents of each chatbot configuration file is JSON that can be read and validated
-by calling the `ChatbotConfig.from_file` function.  Similarly, the
-`ChatbotConfig.to_file` function can be used to write a configuration file to disk.
+by calling the `ChatbotConfig.from_file` function (located in the
+`bootstrap/chatbot_config.py` file).  Similarly, the `ChatbotConfig.to_file` function
+can be used to write a configuration file to disk.
 
 1. Configuration files (as well as any necessary application state) should be stored in
    the directory in which the application is started.
@@ -32,5 +33,11 @@ Grappelli.
 
 Additional requirements:
 
-The application should be stored in a github repository.
+The application should be stored in an existing github repository:
+github.com/kheast/cb-config.  The repository is public and is readable by anyone.
+
+The user of the application should not have to install the application or deal with
+Python virtualenvironments.  Instead, create a bash script named `cbc-edit`.  `cbc-edit`
+will contain a shebang that uses `uv run` to download and the application and run it.
+All that a user should need to run this application is a copy of the `cbc-edit`.
 
