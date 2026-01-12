@@ -2,6 +2,7 @@
 Models for managing chatbot configuration files.
 """
 import json
+import yaml
 from pathlib import Path
 from django.db import models
 from django.conf import settings
@@ -11,24 +12,110 @@ from pydantic import ValidationError as PydanticValidationError
 # Import the ChatbotConfig from bootstrap
 import sys
 sys.path.insert(0, str(settings.BASE_DIR))
-from bootstrap.chatbot_config import ChatbotConfig
+from bootstrap.chatbot_config import ChatbotConfig, FileFormat
+
+
+class BedrockCredentials(models.Model):
+    """AWS Bedrock credentials for Anthropic models."""
+    aws_access_key_id = models.CharField(max_length=200, help_text="AWS Access Key ID")
+    aws_secret_access_key = models.CharField(max_length=200, help_text="AWS Secret Access Key")
+    aws_region = models.CharField(max_length=50, default="us-east-1", help_text="AWS Region")
+
+    class Meta:
+        verbose_name = 'Bedrock Credentials'
+        verbose_name_plural = 'Bedrock Credentials'
+
+    def __str__(self):
+        return f"Bedrock ({self.aws_region})"
+
+
+class OpenAICredentials(models.Model):
+    """OpenAI API credentials."""
+    api_key = models.CharField(max_length=200, help_text="OpenAI API Key")
+    organization_id = models.CharField(max_length=200, blank=True, null=True, help_text="OpenAI Organization ID (optional)")
+
+    class Meta:
+        verbose_name = 'OpenAI Credentials'
+        verbose_name_plural = 'OpenAI Credentials'
+
+    def __str__(self):
+        return f"OpenAI (org: {self.organization_id or 'default'})"
+
+
+class LLMCredentials(models.Model):
+    """
+    LLM provider credentials. Exactly one of anthropic_bedrock or openai must be set.
+    """
+    # Provider choice
+    PROVIDER_CHOICES = [
+        ('anthropic_bedrock', 'Anthropic Bedrock'),
+        ('openai', 'OpenAI'),
+    ]
+    provider = models.CharField(max_length=20, choices=PROVIDER_CHOICES, help_text="LLM Provider")
+
+    # Credentials (exactly one should be set based on provider)
+    anthropic_bedrock = models.OneToOneField(
+        BedrockCredentials,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='llm_credentials'
+    )
+    openai = models.OneToOneField(
+        OpenAICredentials,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='llm_credentials'
+    )
+
+    class Meta:
+        verbose_name = 'LLM Credentials'
+        verbose_name_plural = 'LLM Credentials'
+
+    def __str__(self):
+        return f"LLM Credentials ({self.get_provider_display()})"
+
+    def clean(self):
+        """Validate that exactly one credential type is set based on provider."""
+        super().clean()
+        if self.provider == 'anthropic_bedrock' and not self.anthropic_bedrock:
+            raise ValidationError("Bedrock credentials are required when provider is Anthropic Bedrock")
+        if self.provider == 'openai' and not self.openai:
+            raise ValidationError("OpenAI credentials are required when provider is OpenAI")
+        if self.provider == 'anthropic_bedrock' and self.openai:
+            raise ValidationError("Cannot have OpenAI credentials when provider is Anthropic Bedrock")
+        if self.provider == 'openai' and self.anthropic_bedrock:
+            raise ValidationError("Cannot have Bedrock credentials when provider is OpenAI")
 
 
 class ConfigurationFile(models.Model):
     """
     Django model for managing chatbot configuration files.
 
-    Each instance represents a JSON configuration file stored in the working directory.
-    Files are named with 6-digit sequential numbers (000001.json, 000002.json, etc.).
+    Each instance represents a configuration file (JSON or YAML) stored in the working directory.
+    Files are named with 6-digit sequential numbers (000001.json, 000001.yaml, etc.).
     The metadata.name field must be unique across all configurations.
     """
 
-    # The 6-digit filename (without .json extension)
+    # The 6-digit filename (without extension)
     filename = models.CharField(
         max_length=6,
         unique=True,
         editable=False,
         help_text="Six-digit filename (e.g., 000001)"
+    )
+
+    # File format (json or yaml)
+    FORMAT_CHOICES = [
+        ('json', 'JSON'),
+        ('yaml', 'YAML'),
+    ]
+    file_format = models.CharField(
+        max_length=4,
+        choices=FORMAT_CHOICES,
+        default='json',
+        help_text="File format (JSON or YAML)"
     )
 
     # Cached metadata from the config file for quick access
@@ -50,6 +137,16 @@ class ConfigurationFile(models.Model):
         help_text="Configuration author"
     )
 
+    # LLM credentials (required)
+    llm_credentials = models.OneToOneField(
+        LLMCredentials,
+        on_delete=models.CASCADE,
+        related_name='configuration',
+        null=True,
+        blank=True,
+        help_text="LLM provider credentials"
+    )
+
     # Full configuration as JSON
     config_data = models.JSONField(
         help_text="Complete configuration as JSON"
@@ -65,7 +162,7 @@ class ConfigurationFile(models.Model):
         verbose_name_plural = 'Chatbot Configurations'
 
     def __str__(self):
-        return f"{self.name} ({self.filename}.json)"
+        return f"{self.name} ({self.filename}.{self.file_format})"
 
     @classmethod
     def get_next_filename(cls):
@@ -86,8 +183,8 @@ class ConfigurationFile(models.Model):
         return settings.WORKING_DIR
 
     def get_file_path(self):
-        """Get the full path to this configuration's JSON file."""
-        return self.get_config_directory() / f"{self.filename}.json"
+        """Get the full path to this configuration's file."""
+        return self.get_config_directory() / f"{self.filename}.{self.file_format}"
 
     def validate_config_data(self, skip_datasource_check=False):
         """
@@ -133,28 +230,40 @@ class ConfigurationFile(models.Model):
 
     def load_from_file(self, file_path):
         """
-        Load configuration from an existing JSON file.
+        Load configuration from an existing JSON or YAML file.
 
         Args:
-            file_path: Path to the JSON file
+            file_path: Path to the configuration file
         """
         # Load and validate the config
         config = ChatbotConfig.from_file(file_path)
+
+        # Detect and set the file format
+        file_path_obj = Path(file_path)
+        if file_path_obj.suffix.lower() in ['.yaml', '.yml']:
+            self.file_format = 'yaml'
+        else:
+            self.file_format = 'json'
 
         # Convert to dict, preserving the original structure
         # Use mode='json' to ensure proper serialization of datetime objects
         self.config_data = json.loads(config.model_dump_json(by_alias=True, exclude_none=True))
         self.extract_metadata()
 
+        # Extract and sync LLM credentials
+        self.sync_llm_credentials_from_config_data()
+
         # Note: sync_config_data_to_related() should be called after the instance is saved to the database
         # (so it has a pk). The caller should call it explicitly if needed.
 
     def save_to_file(self):
         """
-        Save the configuration to its JSON file on disk.
+        Save the configuration to its file on disk (JSON or YAML based on file_format).
         """
         config = ChatbotConfig.from_dict(self.config_data)
-        config.to_file(self.get_file_path())
+        # Convert file_format to FileFormat enum
+        format_enum = FileFormat.JSON if self.file_format == 'json' else FileFormat.YAML
+        config.to_file(self.get_file_path(), format=format_enum)
 
     def clean(self):
         """
@@ -267,11 +376,14 @@ class ConfigurationFile(models.Model):
 
     def sync_related_to_config_data(self):
         """
-        Synchronize related objects (datasources, business terms, field mappings)
+        Synchronize related objects (LLM credentials, datasources, business terms, field mappings)
         into the config_data JSON structure.
         """
         if not self.config_data:
             return
+
+        # Sync LLM credentials
+        self.sync_llm_credentials_to_config_data()
 
         # Sync datasources
         datasources = []
@@ -365,6 +477,77 @@ class ConfigurationFile(models.Model):
                 description=mapping.get('description', ''),
                 format=mapping.get('format', 'text'),
                 valid_values=valid_values_str,
+            )
+
+    def sync_llm_credentials_to_config_data(self):
+        """
+        Synchronize LLM credentials model to config_data JSON structure.
+        """
+        if not self.llm_credentials or not self.config_data:
+            return
+
+        llm_creds = self.llm_credentials
+        creds_data = {}
+
+        if llm_creds.provider == 'anthropic_bedrock' and llm_creds.anthropic_bedrock:
+            creds_data['anthropic_bedrock'] = {
+                'aws_access_key_id': llm_creds.anthropic_bedrock.aws_access_key_id,
+                'aws_secret_access_key': llm_creds.anthropic_bedrock.aws_secret_access_key,
+                'aws_region': llm_creds.anthropic_bedrock.aws_region,
+            }
+        elif llm_creds.provider == 'openai' and llm_creds.openai:
+            creds_data['openai'] = {
+                'api_key': llm_creds.openai.api_key,
+            }
+            if llm_creds.openai.organization_id:
+                creds_data['openai']['organization_id'] = llm_creds.openai.organization_id
+
+        self.config_data['llm_credentials'] = creds_data
+
+    def sync_llm_credentials_from_config_data(self):
+        """
+        Synchronize config_data JSON to LLM credentials model.
+        This is called when loading from file.
+        """
+        if not self.config_data:
+            return
+
+        creds_data = self.config_data.get('llm_credentials', {})
+        if not creds_data:
+            return
+
+        # Determine provider
+        if 'anthropic_bedrock' in creds_data and creds_data['anthropic_bedrock']:
+            provider = 'anthropic_bedrock'
+            bedrock_data = creds_data['anthropic_bedrock']
+
+            # Create Bedrock credentials
+            bedrock_creds = BedrockCredentials.objects.create(
+                aws_access_key_id=bedrock_data.get('aws_access_key_id', ''),
+                aws_secret_access_key=bedrock_data.get('aws_secret_access_key', ''),
+                aws_region=bedrock_data.get('aws_region', 'us-east-1'),
+            )
+
+            # Create LLM credentials
+            self.llm_credentials = LLMCredentials.objects.create(
+                provider=provider,
+                anthropic_bedrock=bedrock_creds,
+            )
+
+        elif 'openai' in creds_data and creds_data['openai']:
+            provider = 'openai'
+            openai_data = creds_data['openai']
+
+            # Create OpenAI credentials
+            openai_creds = OpenAICredentials.objects.create(
+                api_key=openai_data.get('api_key', ''),
+                organization_id=openai_data.get('organization_id'),
+            )
+
+            # Create LLM credentials
+            self.llm_credentials = LLMCredentials.objects.create(
+                provider=provider,
+                openai=openai_creds,
             )
 
 

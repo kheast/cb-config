@@ -4,9 +4,13 @@ Zuar Portal Chatbot Configuration Models
 This module defines Pydantic models for validating and loading chatbot configurations.
 Use ChatbotConfig.from_file() to load a configuration from disk.
 
+Supports both JSON and YAML formats. When reading, the format is auto-detected
+from the file contents. When writing, JSON is used by default.
+
 Example:
-    config = ChatbotConfig.from_file("path/to/config.json")
-    print(config.system_prompt.persona.name)
+    config = ChatbotConfig.from_file("path/to/config.yaml")
+    config.to_file("path/to/config.json")  # Writes as JSON (default)
+    config.to_file("path/to/config.yaml", format="yaml")  # Writes as YAML
 """
 
 from __future__ import annotations
@@ -17,6 +21,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 
+import yaml
 from pydantic import (
     BaseModel,
     Field,
@@ -29,6 +34,12 @@ from pydantic import (
 # =============================================================================
 # Enums
 # =============================================================================
+
+class LLMProvider(str, Enum):
+    """Supported LLM providers."""
+    ANTHROPIC_BEDROCK = "anthropic_bedrock"
+    OPENAI = "openai"
+
 
 class Verbosity(str, Enum):
     """Response verbosity levels."""
@@ -89,6 +100,102 @@ class PIIAction(str, Enum):
     WARN = "warn"
 
 
+class FileFormat(str, Enum):
+    """Supported configuration file formats."""
+    JSON = "json"
+    YAML = "yaml"
+
+
+# =============================================================================
+# Format Detection Utilities
+# =============================================================================
+
+def detect_format(content: str) -> FileFormat:
+    """
+    Detect whether content is JSON or YAML based on its structure.
+    
+    Args:
+        content: The file content as a string.
+        
+    Returns:
+        FileFormat.JSON or FileFormat.YAML
+    """
+    stripped = content.strip()
+    
+    # JSON objects start with { and JSON arrays start with [
+    if stripped.startswith('{') or stripped.startswith('['):
+        # Try to parse as JSON to confirm
+        try:
+            json.loads(content)
+            return FileFormat.JSON
+        except json.JSONDecodeError:
+            pass
+    
+    # If not valid JSON, assume YAML
+    return FileFormat.YAML
+
+
+def parse_content(content: str) -> dict[str, Any]:
+    """
+    Parse content as either JSON or YAML based on auto-detection.
+    
+    Args:
+        content: The file content as a string.
+        
+    Returns:
+        Parsed dictionary.
+        
+    Raises:
+        ValueError: If content cannot be parsed as either format.
+    """
+    detected_format = detect_format(content)
+    
+    if detected_format == FileFormat.JSON:
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Failed to parse as JSON: {e}")
+    else:
+        try:
+            result = yaml.safe_load(content)
+            if result is None:
+                return {}
+            if not isinstance(result, dict):
+                raise ValueError("YAML content must be a mapping/dictionary at the root level")
+            return result
+        except yaml.YAMLError as e:
+            raise ValueError(f"Failed to parse as YAML: {e}")
+
+
+def serialize_content(data: dict[str, Any], format: FileFormat = FileFormat.JSON) -> str:
+    """
+    Serialize data to JSON or YAML format.
+    
+    Args:
+        data: The data dictionary to serialize.
+        format: The output format (default: JSON).
+        
+    Returns:
+        Serialized string.
+    """
+    # Convert datetime objects to ISO format strings
+    def convert_datetimes(obj):
+        if isinstance(obj, dict):
+            return {k: convert_datetimes(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [convert_datetimes(item) for item in obj]
+        elif isinstance(obj, datetime):
+            return obj.isoformat()
+        return obj
+    
+    data = convert_datetimes(data)
+    
+    if format == FileFormat.JSON:
+        return json.dumps(data, indent=2, ensure_ascii=False)
+    else:
+        return yaml.dump(data, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+
 # =============================================================================
 # Metadata Models
 # =============================================================================
@@ -125,7 +232,148 @@ class ConfigMetadata(BaseModel):
 
 
 # =============================================================================
-# Data Context Models
+# LLM Provider and Credentials Models (Priority 1)
+# =============================================================================
+
+class BedrockCredentials(BaseModel):
+    """AWS Bedrock credentials for Anthropic models."""
+    
+    model_config = ConfigDict(extra="forbid")
+    
+    aws_access_key_id: str = Field(
+        ...,
+        min_length=16,
+        max_length=128,
+        description="AWS access key ID"
+    )
+    aws_secret_access_key: str = Field(
+        ...,
+        min_length=1,
+        description="AWS secret access key"
+    )
+    aws_region: str = Field(
+        default="us-east-1",
+        pattern=r"^[a-z]{2}-[a-z]+-\d+$",
+        description="AWS region for Bedrock (e.g., us-east-1, us-west-2)"
+    )
+
+
+class OpenAICredentials(BaseModel):
+    """OpenAI API credentials."""
+    
+    model_config = ConfigDict(extra="forbid")
+    
+    api_key: str = Field(
+        ...,
+        min_length=1,
+        description="OpenAI API key"
+    )
+    organization_id: str | None = Field(
+        default=None,
+        description="Optional OpenAI organization ID"
+    )
+
+
+class LLMCredentials(BaseModel):
+    """LLM provider credentials - exactly one provider must be configured."""
+    
+    model_config = ConfigDict(extra="forbid")
+    
+    anthropic_bedrock: BedrockCredentials | None = Field(
+        default=None,
+        description="AWS Bedrock credentials for Anthropic models"
+    )
+    openai: OpenAICredentials | None = Field(
+        default=None,
+        description="OpenAI API credentials"
+    )
+
+    @model_validator(mode="after")
+    def validate_exactly_one_provider(self) -> "LLMCredentials":
+        """Ensure exactly one provider is configured."""
+        providers_set = sum([
+            self.anthropic_bedrock is not None,
+            self.openai is not None,
+        ])
+        if providers_set == 0:
+            raise ValueError(
+                "At least one LLM provider must be configured "
+                "(anthropic_bedrock or openai)"
+            )
+        if providers_set > 1:
+            raise ValueError(
+                "Only one LLM provider can be configured at a time"
+            )
+        return self
+
+    @property
+    def provider(self) -> LLMProvider:
+        """Return the configured provider type."""
+        if self.anthropic_bedrock is not None:
+            return LLMProvider.ANTHROPIC_BEDROCK
+        return LLMProvider.OPENAI
+
+
+# =============================================================================
+# LLM Parameters Models (Priority 1)
+# =============================================================================
+
+class RetryPolicy(BaseModel):
+    """LLM API retry policy."""
+    
+    model_config = ConfigDict(extra="forbid")
+    
+    max_retries: int = Field(default=3, ge=0, le=10)
+    initial_delay_ms: int = Field(default=1000, ge=100, le=30000)
+    backoff_multiplier: float = Field(default=2.0, ge=1.0, le=5.0)
+    max_delay_ms: int = Field(default=10000, ge=1000, le=60000)
+
+
+class LLMParameters(BaseModel):
+    """LLM configuration parameters."""
+    
+    model_config = ConfigDict(extra="forbid")
+    
+    model: str = Field(
+        ...,
+        description="Model identifier (e.g., anthropic.claude-3-sonnet-20240229-v1:0, gpt-4)"
+    )
+    temperature: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Sampling temperature"
+    )
+    max_tokens: int = Field(
+        default=1024,
+        ge=100,
+        le=8192,
+        description="Maximum tokens in response"
+    )
+    top_p: float = Field(
+        default=0.9,
+        ge=0.0,
+        le=1.0,
+        description="Nucleus sampling parameter"
+    )
+    stop_sequences: list[str] = Field(
+        default_factory=list,
+        description="Sequences that stop generation"
+    )
+    retry_policy: RetryPolicy = Field(
+        default_factory=RetryPolicy,
+        description="Retry configuration"
+    )
+    timeout_ms: int = Field(
+        default=30000,
+        ge=5000,
+        le=120000,
+        description="Request timeout in milliseconds"
+    )
+
+
+# =============================================================================
+# Data Context Models (Priority 1)
 # =============================================================================
 
 class Datasource(BaseModel):
@@ -364,7 +612,7 @@ class DataContext(BaseModel):
 
 
 # =============================================================================
-# System Prompt Models
+# System Prompt Models (Priority 1)
 # =============================================================================
 
 class Persona(BaseModel):
@@ -459,7 +707,7 @@ class SystemPrompt(BaseModel):
 
 
 # =============================================================================
-# Guardrails Models
+# Guardrails Models (Priority 1)
 # =============================================================================
 
 class TopicRestrictions(BaseModel):
@@ -635,7 +883,7 @@ class Guardrails(BaseModel):
 
 
 # =============================================================================
-# Structured Output Models
+# Structured Output Models (Priority 2)
 # =============================================================================
 
 class CurrencyFormatting(BaseModel):
@@ -728,76 +976,7 @@ class StructuredOutput(BaseModel):
 
 
 # =============================================================================
-# LLM Parameters Models
-# =============================================================================
-
-class RetryPolicy(BaseModel):
-    """LLM API retry policy."""
-    
-    model_config = ConfigDict(extra="forbid")
-    
-    max_retries: int = Field(default=3, ge=0, le=10)
-    initial_delay_ms: int = Field(default=1000, ge=100, le=30000)
-    backoff_multiplier: float = Field(default=2.0, ge=1.0, le=5.0)
-    max_delay_ms: int = Field(default=10000, ge=1000, le=60000)
-
-
-class LLMParameters(BaseModel):
-    """LLM configuration parameters."""
-    
-    model_config = ConfigDict(extra="forbid")
-    
-    model: str = Field(
-        default="claude-sonnet-4-20250514",
-        description="Model identifier"
-    )
-    temperature: float = Field(
-        default=0.3,
-        ge=0.0,
-        le=1.0,
-        description="Sampling temperature"
-    )
-    max_tokens: int = Field(
-        default=1024,
-        ge=100,
-        le=8192,
-        description="Maximum tokens in response"
-    )
-    top_p: float = Field(
-        default=0.9,
-        ge=0.0,
-        le=1.0,
-        description="Nucleus sampling parameter"
-    )
-    stop_sequences: list[str] = Field(
-        default_factory=list,
-        description="Sequences that stop generation"
-    )
-    retry_policy: RetryPolicy = Field(
-        default_factory=RetryPolicy,
-        description="Retry configuration"
-    )
-    timeout_ms: int = Field(
-        default=30000,
-        ge=5000,
-        le=120000,
-        description="Request timeout in milliseconds"
-    )
-
-    @field_validator("model")
-    @classmethod
-    def validate_model(cls, v: str) -> str:
-        """Validate model identifier format."""
-        allowed_prefixes = ("claude-", "gpt-", "gemini-")
-        if not any(v.startswith(prefix) for prefix in allowed_prefixes):
-            raise ValueError(
-                f"Model must start with one of: {allowed_prefixes}"
-            )
-        return v
-
-
-# =============================================================================
-# Conversation Memory Models
+# Conversation Memory Models (Priority 2)
 # =============================================================================
 
 class ConversationMemory(BaseModel):
@@ -848,7 +1027,40 @@ class ConversationMemory(BaseModel):
 
 
 # =============================================================================
-# MCP Models
+# Elicitation Models (Priority 2)
+# =============================================================================
+
+class ElicitationPattern(BaseModel):
+    """Elicitation pattern for handling ambiguous requests."""
+    
+    model_config = ConfigDict(extra="forbid")
+    
+    trigger: str = Field(..., description="Pattern identifier")
+    condition: str = Field(..., description="When this pattern applies")
+    prompt: str = Field(..., description="Clarification prompt to show user")
+    default_if_skipped: str | None = Field(
+        default=None,
+        description="Default value if user doesn't respond"
+    )
+
+
+class Elicitation(BaseModel):
+    """Elicitation configuration."""
+    
+    model_config = ConfigDict(extra="forbid")
+    
+    enabled: bool = Field(
+        default=True,
+        description="Whether elicitation is enabled"
+    )
+    patterns: list[ElicitationPattern] = Field(
+        default_factory=list,
+        description="Elicitation patterns"
+    )
+
+
+# =============================================================================
+# MCP Models (Priority 3)
 # =============================================================================
 
 class MCPToolParameter(BaseModel):
@@ -927,35 +1139,6 @@ class MCPResources(BaseModel):
     available_resources: list[MCPResource] = Field(
         default_factory=list,
         description="Available resource definitions"
-    )
-
-
-class ElicitationPattern(BaseModel):
-    """Elicitation pattern for handling ambiguous requests."""
-    
-    model_config = ConfigDict(extra="forbid")
-    
-    trigger: str = Field(..., description="Pattern identifier")
-    condition: str = Field(..., description="When this pattern applies")
-    prompt: str = Field(..., description="Clarification prompt to show user")
-    default_if_skipped: str | None = Field(
-        default=None,
-        description="Default value if user doesn't respond"
-    )
-
-
-class MCPElicitation(BaseModel):
-    """MCP elicitation configuration."""
-    
-    model_config = ConfigDict(extra="forbid")
-    
-    enabled: bool = Field(
-        default=True,
-        description="Whether elicitation is enabled"
-    )
-    patterns: list[ElicitationPattern] = Field(
-        default_factory=list,
-        description="Elicitation patterns"
     )
 
 
@@ -1067,15 +1250,13 @@ class ChatbotConfig(BaseModel):
     
     This is the root model that contains all configuration sections.
     Use ChatbotConfig.from_file() to load from disk.
+    
+    Supports both JSON and YAML formats. Format is auto-detected when reading.
+    JSON is used by default when writing.
     """
     
     model_config = ConfigDict(extra="forbid")
     
-    schema_: str | None = Field(
-        default=None,
-        alias="$schema",
-        description="JSON Schema reference"
-    )
     version: str = Field(
         default="1.0.0",
         pattern=r"^\d+\.\d+\.\d+$",
@@ -1084,6 +1265,16 @@ class ChatbotConfig(BaseModel):
     metadata: ConfigMetadata = Field(
         ...,
         description="Configuration metadata"
+    )
+    
+    # Priority 1: Foundation (MVP Required)
+    llm_credentials: LLMCredentials = Field(
+        ...,
+        description="LLM provider credentials (Anthropic via Bedrock or OpenAI)"
+    )
+    llm_parameters: LLMParameters = Field(
+        ...,
+        description="LLM parameters (temperature, max_tokens, etc.)"
     )
     data_context: DataContext = Field(
         ...,
@@ -1097,18 +1288,22 @@ class ChatbotConfig(BaseModel):
         default_factory=Guardrails,
         description="Safety guardrails"
     )
+    
+    # Priority 2: Enhanced Functionality
     structured_output: StructuredOutput = Field(
         default_factory=StructuredOutput,
         description="Structured output configuration"
-    )
-    llm_parameters: LLMParameters = Field(
-        default_factory=LLMParameters,
-        description="LLM parameters"
     )
     conversation_memory: ConversationMemory = Field(
         default_factory=ConversationMemory,
         description="Conversation memory settings"
     )
+    elicitation: Elicitation = Field(
+        default_factory=Elicitation,
+        description="Elicitation configuration for disambiguation"
+    )
+    
+    # Priority 3: Advanced Capabilities
     mcp_tools: MCPTools = Field(
         default_factory=MCPTools,
         description="MCP tools configuration"
@@ -1117,14 +1312,14 @@ class ChatbotConfig(BaseModel):
         default_factory=MCPResources,
         description="MCP resources configuration"
     )
-    mcp_elicitation: MCPElicitation = Field(
-        default_factory=MCPElicitation,
-        description="MCP elicitation configuration"
-    )
+    
+    # Dashboard Integration
     dashboard_integration: DashboardIntegration = Field(
         default_factory=DashboardIntegration,
         description="Dashboard integration settings"
     )
+    
+    # Logging
     logging: Logging = Field(
         default_factory=Logging,
         description="Logging configuration"
@@ -1133,20 +1328,23 @@ class ChatbotConfig(BaseModel):
     @classmethod
     def from_file(cls, path: str | Path) -> "ChatbotConfig":
         """
-        Load and validate a configuration from a JSON file.
+        Load and validate a configuration from a JSON or YAML file.
+        
+        The format is auto-detected from the file contents, not the extension.
         
         Args:
-            path: Path to the JSON configuration file.
+            path: Path to the configuration file.
             
         Returns:
             Validated ChatbotConfig instance.
             
         Raises:
             FileNotFoundError: If the file doesn't exist.
-            json.JSONDecodeError: If the file isn't valid JSON.
+            ValueError: If the file cannot be parsed.
             pydantic.ValidationError: If the configuration is invalid.
             
         Example:
+            config = ChatbotConfig.from_file("configs/sales-dashboard.yaml")
             config = ChatbotConfig.from_file("configs/sales-dashboard.json")
         """
         path = Path(path)
@@ -1154,8 +1352,25 @@ class ChatbotConfig(BaseModel):
             raise FileNotFoundError(f"Configuration file not found: {path}")
         
         with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+            content = f.read()
         
+        data = parse_content(content)
+        return cls.model_validate(data)
+
+    @classmethod
+    def from_string(cls, content: str) -> "ChatbotConfig":
+        """
+        Load and validate a configuration from a JSON or YAML string.
+        
+        The format is auto-detected from the content.
+        
+        Args:
+            content: Configuration content as a string.
+            
+        Returns:
+            Validated ChatbotConfig instance.
+        """
+        data = parse_content(content)
         return cls.model_validate(data)
 
     @classmethod
@@ -1171,23 +1386,49 @@ class ChatbotConfig(BaseModel):
         """
         return cls.model_validate(data)
 
-    def to_file(self, path: str | Path) -> None:
+    def to_file(
+        self, 
+        path: str | Path, 
+        format: FileFormat | str = FileFormat.JSON
+    ) -> None:
         """
-        Save the configuration to a JSON file.
+        Save the configuration to a file.
         
         Args:
             path: Path to save the configuration to.
+            format: Output format - "json" (default) or "yaml".
         """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         
+        if isinstance(format, str):
+            format = FileFormat(format.lower())
+        
+        data = self.model_dump(by_alias=True, exclude_none=True)
+        content = serialize_content(data, format)
+        
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(
-                self.model_dump(by_alias=True, exclude_none=True),
-                f,
-                indent=2,
-                default=str,
-            )
+            f.write(content)
+
+    def to_json(self) -> str:
+        """
+        Serialize the configuration to a JSON string.
+        
+        Returns:
+            JSON string.
+        """
+        data = self.model_dump(by_alias=True, exclude_none=True)
+        return serialize_content(data, FileFormat.JSON)
+
+    def to_yaml(self) -> str:
+        """
+        Serialize the configuration to a YAML string.
+        
+        Returns:
+            YAML string.
+        """
+        data = self.model_dump(by_alias=True, exclude_none=True)
+        return serialize_content(data, FileFormat.YAML)
 
     def get_system_prompt_text(self) -> str:
         """
@@ -1226,6 +1467,15 @@ class ChatbotConfig(BaseModel):
         """
         return [ds.portal_datasource_id for ds in self.data_context.datasources]
 
+    def get_llm_provider(self) -> LLMProvider:
+        """
+        Get the configured LLM provider.
+        
+        Returns:
+            The LLM provider enum value.
+        """
+        return self.llm_credentials.provider
+
 
 # =============================================================================
 # Example Usage
@@ -1235,18 +1485,21 @@ if __name__ == "__main__":
     import sys
     
     if len(sys.argv) < 2:
-        print("Usage: python chatbot_config.py <config_file.json>")
+        print("Usage: python chatbot_config.py <config_file>")
         print("\nThis will validate the configuration and print a summary.")
+        print("Supports both JSON and YAML formats (auto-detected).")
         sys.exit(1)
     
     config_path = sys.argv[1]
     
     try:
         config = ChatbotConfig.from_file(config_path)
-        print(f"✓ Configuration '{config.metadata.name}' loaded successfully!")
+        print(f"[OK] Configuration '{config.metadata.name}' loaded successfully!")
         print(f"\n  Description: {config.metadata.description}")
         print(f"  Version: {config.version}")
         print(f"  Author: {config.metadata.author}")
+        print(f"  LLM Provider: {config.get_llm_provider().value}")
+        print(f"  LLM Model: {config.llm_parameters.model}")
         print(f"  Datasources: {len(config.data_context.datasources)}")
         print(f"  Business terms: {len(config.data_context.semantic_layer.business_terms)}")
         print(f"  Field mappings: {len(config.data_context.semantic_layer.field_mappings)}")
@@ -1254,14 +1507,13 @@ if __name__ == "__main__":
         print(f"  Guardrails enabled: Yes")
         print(f"  MCP tools enabled: {config.mcp_tools.enabled}")
         print(f"  MCP resources enabled: {config.mcp_resources.enabled}")
-        print(f"  Model: {config.llm_parameters.model}")
         
     except FileNotFoundError as e:
-        print(f"✗ Error: {e}")
+        print(f"[ERROR] {e}")
         sys.exit(1)
-    except json.JSONDecodeError as e:
-        print(f"✗ Invalid JSON: {e}")
+    except ValueError as e:
+        print(f"[ERROR] Parse error: {e}")
         sys.exit(1)
     except Exception as e:
-        print(f"✗ Validation error: {e}")
+        print(f"[ERROR] Validation error: {e}")
         sys.exit(1)

@@ -29,6 +29,54 @@ class ConfigurationFileForm(forms.ModelForm):
         help_text="Your name or email"
     )
 
+    # LLM Credentials
+    llm_provider = forms.ChoiceField(
+        choices=[
+            ('anthropic_bedrock', 'Anthropic Bedrock (AWS)'),
+            ('openai', 'OpenAI'),
+        ],
+        initial='anthropic_bedrock',
+        label="LLM Provider",
+        help_text="Select the LLM provider"
+    )
+
+    # AWS Bedrock credentials (shown when provider is anthropic_bedrock)
+    aws_access_key_id = forms.CharField(
+        max_length=200,
+        required=False,
+        label="AWS Access Key ID",
+        help_text="AWS Access Key ID for Bedrock"
+    )
+    aws_secret_access_key = forms.CharField(
+        max_length=200,
+        required=False,
+        widget=forms.PasswordInput(render_value=True),
+        label="AWS Secret Access Key",
+        help_text="AWS Secret Access Key for Bedrock"
+    )
+    aws_region = forms.CharField(
+        max_length=50,
+        initial="us-east-1",
+        required=False,
+        label="AWS Region",
+        help_text="AWS Region for Bedrock"
+    )
+
+    # OpenAI credentials (shown when provider is openai)
+    openai_api_key = forms.CharField(
+        max_length=200,
+        required=False,
+        widget=forms.PasswordInput(render_value=True),
+        label="OpenAI API Key",
+        help_text="OpenAI API Key"
+    )
+    openai_organization_id = forms.CharField(
+        max_length=200,
+        required=False,
+        label="OpenAI Organization ID",
+        help_text="OpenAI Organization ID (optional)"
+    )
+
     # System Prompt - Base
     system_prompt_base = forms.CharField(
         widget=forms.Textarea(attrs={'rows': 10, 'cols': 80}),
@@ -166,9 +214,20 @@ class ConfigurationFileForm(forms.ModelForm):
         help_text="JSON for advanced settings: guardrails, MCP tools, dashboard integration, etc."
     )
 
+    # File format field
+    file_format = forms.ChoiceField(
+        choices=[
+            ('json', 'JSON'),
+            ('yaml', 'YAML'),
+        ],
+        initial='json',
+        label="File Format",
+        help_text="Choose JSON or YAML format for the configuration file"
+    )
+
     class Meta:
         model = ConfigurationFile
-        fields = ['config_name', 'config_description', 'config_author']
+        fields = ['config_name', 'config_description', 'config_author', 'file_format']
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -176,6 +235,8 @@ class ConfigurationFileForm(forms.ModelForm):
         # If editing existing instance, populate form fields from config_data
         if self.instance and self.instance.pk and self.instance.config_data:
             self._populate_from_config_data()
+            # Also populate file_format
+            self.fields['file_format'].initial = self.instance.file_format
 
     def _populate_from_config_data(self):
         """Populate form fields from existing config_data."""
@@ -186,6 +247,20 @@ class ConfigurationFileForm(forms.ModelForm):
         self.fields['config_name'].initial = metadata.get('name', '')
         self.fields['config_description'].initial = metadata.get('description', '')
         self.fields['config_author'].initial = metadata.get('author', '')
+
+        # LLM Credentials
+        llm_credentials = config.get('llm_credentials', {})
+        if 'anthropic_bedrock' in llm_credentials and llm_credentials['anthropic_bedrock']:
+            self.fields['llm_provider'].initial = 'anthropic_bedrock'
+            bedrock = llm_credentials['anthropic_bedrock']
+            self.fields['aws_access_key_id'].initial = bedrock.get('aws_access_key_id', '')
+            self.fields['aws_secret_access_key'].initial = bedrock.get('aws_secret_access_key', '')
+            self.fields['aws_region'].initial = bedrock.get('aws_region', 'us-east-1')
+        elif 'openai' in llm_credentials and llm_credentials['openai']:
+            self.fields['llm_provider'].initial = 'openai'
+            openai = llm_credentials['openai']
+            self.fields['openai_api_key'].initial = openai.get('api_key', '')
+            self.fields['openai_organization_id'].initial = openai.get('organization_id', '')
 
         # System Prompt
         system_prompt = config.get('system_prompt', {})
@@ -232,7 +307,7 @@ class ConfigurationFileForm(forms.ModelForm):
             'structured_output': config.get('structured_output', {}),
             'mcp_tools': config.get('mcp_tools', {}),
             'mcp_resources': config.get('mcp_resources', {}),
-            'mcp_elicitation': config.get('mcp_elicitation', {}),
+            'elicitation': config.get('elicitation', {}),  # Changed from mcp_elicitation
             'dashboard_integration': config.get('dashboard_integration', {}),
             'logging': config.get('logging', {}),
         }
@@ -273,6 +348,19 @@ class ConfigurationFileForm(forms.ModelForm):
         """Build the complete config_data from individual fields."""
         cleaned_data = super().clean()
 
+        # Validate LLM credentials based on provider
+        provider = cleaned_data.get('llm_provider')
+        if provider == 'anthropic_bedrock':
+            if not cleaned_data.get('aws_access_key_id'):
+                self.add_error('aws_access_key_id', 'AWS Access Key ID is required for Bedrock')
+            if not cleaned_data.get('aws_secret_access_key'):
+                self.add_error('aws_secret_access_key', 'AWS Secret Access Key is required for Bedrock')
+            if not cleaned_data.get('aws_region'):
+                self.add_error('aws_region', 'AWS Region is required for Bedrock')
+        elif provider == 'openai':
+            if not cleaned_data.get('openai_api_key'):
+                self.add_error('openai_api_key', 'OpenAI API Key is required for OpenAI')
+
         # Build the complete configuration
         from datetime import datetime
 
@@ -296,6 +384,23 @@ class ConfigurationFileForm(forms.ModelForm):
         else:
             created = now
 
+        # Build LLM credentials section
+        llm_credentials = {}
+        provider = cleaned_data.get('llm_provider')
+        if provider == 'anthropic_bedrock':
+            llm_credentials['anthropic_bedrock'] = {
+                'aws_access_key_id': cleaned_data.get('aws_access_key_id', ''),
+                'aws_secret_access_key': cleaned_data.get('aws_secret_access_key', ''),
+                'aws_region': cleaned_data.get('aws_region', 'us-east-1'),
+            }
+        elif provider == 'openai':
+            openai_creds = {
+                'api_key': cleaned_data.get('openai_api_key', ''),
+            }
+            if cleaned_data.get('openai_organization_id'):
+                openai_creds['organization_id'] = cleaned_data.get('openai_organization_id')
+            llm_credentials['openai'] = openai_creds
+
         # Build complete config_data
         # Note: datasources, business_terms, and field_mappings will be populated
         # by sync_related_to_config_data() after the related objects are saved
@@ -308,6 +413,7 @@ class ConfigurationFileForm(forms.ModelForm):
                 "modified": now,
                 "author": cleaned_data.get('config_author', ''),
             },
+            "llm_credentials": llm_credentials,
             "data_context": {
                 "datasources": [],  # Will be populated from inline formset
                 "semantic_layer": {
@@ -359,14 +465,56 @@ class ConfigurationFileForm(forms.ModelForm):
 
     def save(self, commit=True):
         """Save the configuration with the built config_data."""
+        from .models import BedrockCredentials, OpenAICredentials, LLMCredentials
+
         # Don't call super().save() yet - we need to set config_data first
         instance = self.instance
 
         # Set config_data from cleaned_data BEFORE validation
         instance.config_data = self.cleaned_data['config_data']
 
+        # Set file format
+        instance.file_format = self.cleaned_data.get('file_format', 'json')
+
         # Extract metadata to model fields
         instance.extract_metadata()
+
+        # Handle LLM credentials - create or update the LLM credentials objects
+        provider = self.cleaned_data.get('llm_provider')
+
+        # If editing existing config with llm_credentials, delete old ones
+        if instance.pk and instance.llm_credentials:
+            old_creds = instance.llm_credentials
+            instance.llm_credentials = None
+            instance.save(skip_file_save=True)
+            if old_creds.anthropic_bedrock:
+                old_creds.anthropic_bedrock.delete()
+            if old_creds.openai:
+                old_creds.openai.delete()
+            old_creds.delete()
+
+        # Create new LLM credentials
+        if provider == 'anthropic_bedrock':
+            bedrock_creds = BedrockCredentials.objects.create(
+                aws_access_key_id=self.cleaned_data.get('aws_access_key_id', ''),
+                aws_secret_access_key=self.cleaned_data.get('aws_secret_access_key', ''),
+                aws_region=self.cleaned_data.get('aws_region', 'us-east-1'),
+            )
+            llm_creds = LLMCredentials.objects.create(
+                provider='anthropic_bedrock',
+                anthropic_bedrock=bedrock_creds,
+            )
+            instance.llm_credentials = llm_creds
+        elif provider == 'openai':
+            openai_creds = OpenAICredentials.objects.create(
+                api_key=self.cleaned_data.get('openai_api_key', ''),
+                organization_id=self.cleaned_data.get('openai_organization_id') or None,
+            )
+            llm_creds = LLMCredentials.objects.create(
+                provider='openai',
+                openai=openai_creds,
+            )
+            instance.llm_credentials = llm_creds
 
         # Now validate and save
         if commit:

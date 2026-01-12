@@ -47,6 +47,7 @@ class ConfigurationFileAdmin(admin.ModelAdmin):
     ]
 
     list_filter = [
+        'file_format',
         'created',
         'modified',
     ]
@@ -73,6 +74,17 @@ class ConfigurationFileAdmin(admin.ModelAdmin):
                 'config_author',
             ),
             'description': 'Basic information about this chatbot configuration.'
+        }),
+        ('LLM Credentials', {
+            'fields': (
+                'llm_provider',
+                'aws_access_key_id',
+                'aws_secret_access_key',
+                'aws_region',
+                'openai_api_key',
+                'openai_organization_id',
+            ),
+            'description': 'Configure LLM provider credentials. Only fields for the selected provider are required.'
         }),
         ('System Prompt', {
             'fields': (
@@ -134,20 +146,21 @@ class ConfigurationFileAdmin(admin.ModelAdmin):
         ('File Information', {
             'fields': (
                 'filename',
+                'file_format',
                 'file_path_display',
                 'created',
                 'modified',
             ),
             'classes': ('collapse',),
-            'description': 'File system information (read-only).'
+            'description': 'File system information.'
         }),
     )
 
     actions = ['rename_configuration']
 
     def filename_display(self, obj):
-        """Display the filename with .json extension."""
-        return format_html('<code>{}.json</code>', obj.filename)
+        """Display the filename with the correct extension."""
+        return format_html('<code>{}.{}</code>', obj.filename, obj.file_format)
     filename_display.short_description = 'Filename'
 
     def description_short(self, obj):
@@ -211,7 +224,7 @@ class ConfigurationFileAdmin(admin.ModelAdmin):
             form.instance.save_with_related()
             self.message_user(
                 request,
-                f"Configuration '{form.instance.name}' saved successfully to {form.instance.filename}.json",
+                f"Configuration '{form.instance.name}' saved successfully to {form.instance.filename}.{form.instance.file_format}",
                 level='success'
             )
         except ValidationError as e:
@@ -227,11 +240,12 @@ class ConfigurationFileAdmin(admin.ModelAdmin):
         Override delete_model to show confirmation message.
         """
         filename = obj.filename
+        file_format = obj.file_format
         name = obj.name
         super().delete_model(request, obj)
         self.message_user(
             request,
-            f"Configuration '{name}' ({filename}.json) deleted successfully. "
+            f"Configuration '{name}' ({filename}.{file_format}) deleted successfully. "
             f"The filename {filename} will not be reused.",
             level='success'
         )
